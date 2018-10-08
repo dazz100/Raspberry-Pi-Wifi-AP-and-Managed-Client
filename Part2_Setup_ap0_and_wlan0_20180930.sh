@@ -2,21 +2,26 @@
 # Sets up a wifi access point and managed client running together on a Raspberry Pi
 # This script is wholly based on instructions by Ingo found at the link:
 # https://raspberrypi.stackexchange.com/questions/87504/raspberry-pi-zero-w-as-a-wifi-repeater/87506#87506
-# This setup creates an ap and managed client that are stand-alone. 
+# This setup creates an ap and managed client that are stand-alone.
 #
 # IP forwarding is not enabled in this script.  If required, that needs to be done with IPForward in
 # /etc/systemd/network/12-ap0.network so it sends all packages with unknown destination addresses, e.g.
 # internet addresses to the next hop to the internet router.  Also a static route would be required so packets
 # can find the route for returning packages from the internet over the RasPi to the network from the access
 # point.
-# 
-# This script is part 2 of 2. 
+#
+# This script is part 2 of 2.
 # Part 1 is run before the Pi is rebooted.
 # Part 2 is run after the reboot.
 # This script was tested with the 2018-06-27 release of Raspbian Stretch
 # running on a Raspberry Pi 3B.
 # version 1.0  30 Sept 2018
-#
+
+if [ "$EUID" -ne 0 ]
+  then echo "This script must run as root"
+  exit 1
+fi
+
 ######### Variables
 
 ## wlan0
@@ -42,14 +47,14 @@ echo PART 2 of 2 : SETUP WIFI ACCESS POINT AND MANAGAED CLIENT
 echo
 echo This script will reconfigure the wifi to an access point and managed client.
 echo This script will make major changes to your network configuration.
-read -p 'Click any key to continue.  Click q to quit.'  user_quit
+read -p 'Type any key to continue.  Type q to quit.'  user_quit
 if [ "$user_quit" = "q" ]
 then
-  exit
+  exit 1
 fi
 echo Testing wlan0
 echo starting the wlan0 service
-sudo systemctl start wpa_supplicant@wlan0.service
+systemctl start wpa_supplicant@wlan0.service
 echo
 echo show the status
 systemctl status wpa_supplicant@wlan0.service
@@ -60,7 +65,7 @@ read -p  'If the right access point is not found, press q to exit.'  user_quit
 if [ "$user_quit" = "q" ]
 then
   echo The access point you want to connect to may not be running or in range. Go back and troubleshoot.
-  exit
+  exit 1
 fi
 echo Confirm wlan0 is connected to an access point
 iw wlan0 info
@@ -68,31 +73,31 @@ read -p  'If wlan0 is not connected to an access point, press q to exit.'  user_
 if [ "$user_quit" = "q" ]
 then
   echo Check that the SSID and pass phrase values are correct. Go back and troubleshoot.
-  exit
+  exit 1
 fi
 echo Confirm wlan0 has been assigned an IP address
-ifconfig wlan0 | grep -w inet 
+ifconfig wlan0 | grep -w inet
 read -p  'If wlan0 does not have an IP address, press q to exit.'  user_quit
 if [ "$user_quit" = "q" ]
 then
   echo Something is not right.  Go back and troubleshoot.
-  exit
+  exit 1
 fi
 echo Confirm Internet access
 ping -I wlan0 -c3 google.com
 echo
 echo Check that ap0 can be set and deleted
-sudo iw dev wlan0 interface add ap0 type__ap
+iw dev wlan0 interface add ap0 type__ap
 echo Get the ap0 status
-sudo iw dev ap0 info
+iw dev ap0 info
 read -p  'If ap0 is not loaded and active, press q to exit.'  user_quit
 if [ "$user_quit" = "q" ]
 then
   echo Something is not right.  Go back and troubleshoot.
-  exit
+  exit 1
 fi
-sudo iw dev ap0 del
-echo Completed test of ap0. 
+iw dev ap0 del
+echo Completed test of ap0.
 read -p 'Press any key to continue with installation of hostapd'  user_go
 
 
@@ -100,13 +105,13 @@ read -p 'Press any key to continue with installation of hostapd'  user_go
 echo SETTING UP WLAN0 AND AP0
 echo PART 2 : Install hostapd
 
-sudo apt update
-sudo apt install rng-tools hostapd
-sudo systemctl stop hostapd
+apt update
+apt install rng-tools hostapd
+systemctl stop hostapd
 
 echo Creating the file with your settings for ssid= and wpa_passphrase=:
 echo
-cat > ~/hostapd.conf <<EOF
+cat > /etc/hostapd/hostapd.conf <<EOF
 interface=ap0
 driver=nl80211
 ssid="$ap0_SSID"
@@ -123,50 +128,44 @@ wpa_pairwise=TKIP
 rsn_pairwise=CCMP
 EOF
 
-sudo mv ~/hostapd.conf /etc/hostapd/hostapd.conf
-sudo chmod 600 /etc/hostapd/hostapd.conf
-sudo chown root:root /etc/hostapd/hostapd.conf
+chmod 600 /etc/hostapd/hostapd.conf
 
 echo
 echo 'Setting DAEMON_CONF="/etc/hostapd/hostapd.conf" in /etc/default/hostapd'
-sudo sed -i 's/^#DAEMON_CONF=.*$/DAEMON_CONF="\/etc\/hostapd\/hostapd.conf"/' /etc/default/hostapd
+sed -i 's/^#DAEMON_CONF=.*$/DAEMON_CONF="\/etc\/hostapd\/hostapd.conf"/' /etc/default/hostapd
 echo 'adding a # to the line # Should-Start: to disable old SysV init system'
 echo 'Changing the line # Should-Start: ... by adding ## at the beginning'
-sudo sed -i -e 's/# Should-Start:/## Should-Start:/' /etc/init.d/hostapd
+sed -i -e 's/^# Should-Start:/## Should-Start:/' /etc/init.d/hostapd
 echo Reading the line from the /etc/default/hostapd file:
 
 echo
 echo
 echo Creating ap0 service
-sudo mkdir -p /etc/systemd/system/hostapd.service.d
-sudo chmod 755 /etc/systemd/system/hostapd.service.d
+mkdir -p /etc/systemd/system/hostapd.service.d
+chmod 755 /etc/systemd/system/hostapd.service.d
 
-cat > ~/override.conf <<EOF
+cat > /etc/systemd/system/hostapd.service.d/override.conf <<EOF
 [Service]
 ExecStartPre=/sbin/iw dev wlan0 interface add ap0 type __ap
 EOF
 
-sudo mv ~/override.conf /etc/systemd/system/hostapd.service.d/override.conf
-sudo chmod 644 /etc/systemd/system/hostapd.service.d/override.conf
-sudo chown root:root /etc/systemd/system/hostapd.service.d/override.conf
+chmod 644 /etc/systemd/system/hostapd.service.d/override.conf
 
-sudo systemctl daemon-reload
+systemctl daemon-reload
 echo Start wpa_supplicant after hostapd
-sudo mkdir -p /etc/systemd/system/wpa_supplicant@wlan0.service.d
-sudo chmod 755 /etc/systemd/system/wpa_supplicant@wlan0.service.d
-cat > ~/override.conf <<EOF
+mkdir -p /etc/systemd/system/wpa_supplicant@wlan0.service.d
+chmod 755 /etc/systemd/system/wpa_supplicant@wlan0.service.d
+cat > /etc/systemd/system/wpa_supplicant@wlan0.service.d/override.conf <<EOF
 [Unit]
 After=hostapd.service
 EOF
-sudo mv ~/override.conf  /etc/systemd/system/wpa_supplicant@wlan0.service.d/override.conf
-sudo chmod 644 /etc/systemd/system/wpa_supplicant@wlan0.service.d/override.conf
-sudo chown root:root /etc/systemd/system/wpa_supplicant@wlan0.service.d/override.conf
+chmod 644 /etc/systemd/system/wpa_supplicant@wlan0.service.d/override.conf
 
-sudo systemctl daemon-reload
+systemctl daemon-reload
 echo Checking ap0 that ap0 has an ip address:
 ifconfig ap0 | grep inet
 echo Checking the status of wlan0 and ap0:
-sudo systemctl status wpa_supplicant@wlan0.service
+systemctl status wpa_supplicant@wlan0.service
 echo
 echo
 echo  Setup of wlan0 and ap0 now complete.
