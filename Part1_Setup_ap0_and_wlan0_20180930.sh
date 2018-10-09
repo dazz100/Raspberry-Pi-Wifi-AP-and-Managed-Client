@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -e
 # Sets up a wifi access point and managed client running together on a Raspberry Pi
 # This script is wholly based on instructions by Ingo found at the link:
 # https://raspberrypi.stackexchange.com/questions/87504/raspberry-pi-zero-w-as-a-wifi-repeater/87506#87506
@@ -18,7 +18,7 @@
 # version 1.0  30 Sept 2018
 
 if [ "$EUID" -ne 0 ]
-  then echo "This script must run as root"
+  then echo "Error: this script must run as root"
   exit 1
 fi
 
@@ -28,6 +28,7 @@ fi
 # enter the values of the access point you want the wlan0 managed client to connect with
 # This setup assumes that wlan0 will be assigned a IP by the AP dhcp server
 #  SSID
+country_code=NZ
 wlan0_SSID=MyNetwork
 #  Pass Phrase.  Must be more than 8 characters long
 wlan0_PP=SuperSecret
@@ -40,10 +41,10 @@ ap0_SSID=MyID
 #  Pass Phrase other wifi clients will use
 ap0_PP=MostSecret
 #  The static IP address assigned to ap0
-ap0_IP="1.2.3.4/24"
+ap0_IP=192.168.4.1/24
 
 #########  Setup systemd-networkd
-echo PART 1 of 2 : SETUP WIFI ACCESS POINT AND MANAGAED CLIENT
+echo PART 1 of 2 : SETUP WIFI ACCESS POINT AND MANAGED CLIENT
 echo
 echo This script will reconfigure the wifi to an access point and managed client.
 echo This script will make major changes to your network configuration.
@@ -61,8 +62,11 @@ echo Disabling networking and dhcpcd services.
 systemctl mask networking.service
 systemctl mask dhcpcd.service
 echo renaming the network interfaces file to make it inactive
-mv /etc/network/interfaces /etc/network/interfaces~
-sed -i '1i resolvconf=NO' /etc/resolvconf.conf
+[ -f /etc/network/interfaces ] && \
+  mv /etc/network/interfaces /etc/network/interfaces~
+echo disable old name resolver
+grep -q resolvconf=NO /etc/resolvconf.conf || \
+  sed -i '1i resolvconf=NO' /etc/resolvconf.conf
 echo Enabling the new systemd-networkd services
 systemctl enable systemd-networkd.service
 systemctl enable systemd-resolved.service
@@ -81,14 +85,14 @@ cat > /etc/systemd/network/12-ap0.network <<EOF
 [Match]
 Name=ap0
 [Network]
-Address="$ap0_IP"
+Address=$ap0_IP
 DHCPServer=yes
 IPForward=no
 EOF
 
 echo Setting up wpa_supplicant files
 cat > /etc/wpa_supplicant/wpa_supplicant-wlan0.conf <<EOF
-country=NZ
+country=$country_code
 ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
 update_config=1
 
@@ -101,7 +105,7 @@ EOF
 chmod 600 /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
 
 systemctl disable wpa_supplicant.service
-rm /etc/wpa_supplicant/wpa_supplicant.conf
+rm -f /etc/wpa_supplicant/wpa_supplicant.conf
 
 systemctl enable wpa_supplicant@wlan0.service
 
