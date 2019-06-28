@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -e
 # Sets up a wifi access point and managed client running together on a Raspberry Pi
 # This script is wholly based on instructions by Ingo found at the link:
 # https://raspberrypi.stackexchange.com/questions/87504/raspberry-pi-zero-w-as-a-wifi-repeater/87506#87506
@@ -18,7 +18,7 @@
 # version 1.0  30 Sept 2018
 
 if [ "$EUID" -ne 0 ]
-  then echo "This script must run as root"
+  then echo "Error: this script must run as root"
   exit 1
 fi
 
@@ -36,14 +36,14 @@ wlan0_PP=SuperSecret
 ## ap0
 # enter the values that other wifi clients will use to connect to ap0
 #  SSID
-ap0_SSID=MyID
+ap0_SSID=RPiNet
 #  Pass Phrase other wifi clients will use
 ap0_PP=MostSecret
 #  The static IP address assigned to ap0
 ap0_IP="1.2.3.4/24"
 
 #########  Test wlan0
-echo PART 2 of 2 : SETUP WIFI ACCESS POINT AND MANAGAED CLIENT
+echo PART 2 of 2 : SETUP WIFI ACCESS POINT AND MANAGED CLIENT
 echo
 echo This script will reconfigure the wifi to an access point and managed client.
 echo This script will make major changes to your network configuration.
@@ -53,14 +53,11 @@ then
   exit 1
 fi
 echo Testing wlan0
-echo starting the wlan0 service
-systemctl start wpa_supplicant@wlan0.service
-echo
 echo show the status
 systemctl status wpa_supplicant@wlan0.service
 echo
 echo confirm there is an access point to connect to.
-iwlist wlan0 scan | grep ESSID
+iw dev wlan0 scan | grep 'SSID: '
 read -p  'If the right access point is not found, press q to exit.'  user_quit
 if [ "$user_quit" = "q" ]
 then
@@ -76,7 +73,7 @@ then
   exit 1
 fi
 echo Confirm wlan0 has been assigned an IP address
-ifconfig wlan0 | grep -w inet
+ip -4 -br addr show wlan0
 read -p  'If wlan0 does not have an IP address, press q to exit.'  user_quit
 if [ "$user_quit" = "q" ]
 then
@@ -87,7 +84,7 @@ echo Confirm Internet access
 ping -I wlan0 -c3 google.com
 echo
 echo Check that ap0 can be set and deleted
-iw dev wlan0 interface add ap0 type__ap
+iw dev wlan0 interface add ap0 type __ap
 echo Get the ap0 status
 iw dev ap0 info
 read -p  'If ap0 is not loaded and active, press q to exit.'  user_quit
@@ -114,7 +111,7 @@ echo
 cat > /etc/hostapd/hostapd.conf <<EOF
 interface=ap0
 driver=nl80211
-ssid="$ap0_SSID"
+ssid=$ap0_SSID
 hw_mode=g
 channel=7
 wmm_enabled=0
@@ -122,7 +119,7 @@ macaddr_acl=0
 auth_algs=1
 ignore_broadcast_ssid=0
 wpa=2
-wpa_passphrase="$ap0_PP"
+wpa_passphrase=$ap0_PP
 wpa_key_mgmt=WPA-PSK
 wpa_pairwise=TKIP
 rsn_pairwise=CCMP
@@ -147,12 +144,14 @@ chmod 755 /etc/systemd/system/hostapd.service.d
 cat > /etc/systemd/system/hostapd.service.d/override.conf <<EOF
 [Service]
 ExecStartPre=/sbin/iw dev wlan0 interface add ap0 type __ap
+ExecStopPost=/sbin/iw dev ap0 del
 EOF
 
 chmod 644 /etc/systemd/system/hostapd.service.d/override.conf
 
 systemctl daemon-reload
 echo Start wpa_supplicant after hostapd
+systemctl stop wpa_supplicant@wlan0.service
 mkdir -p /etc/systemd/system/wpa_supplicant@wlan0.service.d
 chmod 755 /etc/systemd/system/wpa_supplicant@wlan0.service.d
 cat > /etc/systemd/system/wpa_supplicant@wlan0.service.d/override.conf <<EOF
@@ -162,8 +161,10 @@ EOF
 chmod 644 /etc/systemd/system/wpa_supplicant@wlan0.service.d/override.conf
 
 systemctl daemon-reload
+systemctl start hostapd.service
+systemctl start wpa_supplicant@wlan0.service
 echo Checking ap0 that ap0 has an ip address:
-ifconfig ap0 | grep inet
+ip -4 -br addr show ap0
 echo Checking the status of wlan0 and ap0:
 systemctl status wpa_supplicant@wlan0.service
 echo
